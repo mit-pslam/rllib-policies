@@ -115,7 +115,7 @@ class NatureCNNRNNActorCritic(RNNActorCritic):
     NatureCNN."""
 
     def init_nets(self, *, fields: List[str], cnn_shape_chw: Tuple[int, int, int]):
-        return [NatureCNNBase(fields, cnn_shape_chw)]
+        return (NatureCNNBase(fields, cnn_shape_chw),)
 
 
 class NatureCNNActorCritic(ActorCritic):
@@ -123,4 +123,4 @@ class NatureCNNActorCritic(ActorCritic):
     image data with NatureCNN."""
 
     def init_nets(self, *, fields: List[str], cnn_shape_chw: Tuple[int, int, int]):
-        return [NatureCNNBase(fields, cnn_shape_chw)]
+        return (NatureCNNBase(fields, cnn_shape_chw),)
