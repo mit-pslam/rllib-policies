@@ -20,9 +20,8 @@
 ###################################################################################################
 
 from abc import ABC, abstractclassmethod
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
-import numpy as np
 import torch
 from torch_geometric.data import Data, DataLoader
 from torch_geometric.nn import GCNConv
@@ -34,10 +33,7 @@ from .actor_critic import ActorCritic
 
 class GCN(torch.nn.Module, ABC):
     def __init__(
-        self,
-        in_features,
-        graph_conv_features=[16, 32],
-        embedding_size=[128],
+        self, in_features, graph_conv_features=[16, 32], embedding_size=[128],
     ):
         """Initialize Graph Convolutional Network
 
@@ -202,9 +198,7 @@ class GCN(torch.nn.Module, ABC):
 
     @abstractclassmethod
     def get_policy_features(
-        self,
-        h: torch.Tensor,
-        batch_index: torch.Tensor,
+        self, h: torch.Tensor, batch_index: torch.Tensor,
     ) -> torch.Tensor:
         """Get learned graph features for policy.
 
@@ -277,23 +271,23 @@ class GCN(torch.nn.Module, ABC):
     def forward(
         self,
         nodes: torch.Tensor,
-        node_shapes: torch.Tensor,
+        nodes_shape: torch.Tensor,
         edges: torch.Tensor,
-        edge_shapes: torch.Tensor,
+        edges_shape: torch.Tensor,
     ):
         """Forward a batch of graphs through the network
 
         Args:
-            graph_nodes (torch.Tensor): Shape (B, N, X) tensor
+            nodes (torch.Tensor): Shape (B, N, X) tensor
                 `of  `N` nodes with `X` features. `B` is the
                 batch dimension. Note that nodes may be padded.
-            graph_node_shapes (torch.Tensor): Shape (B, n, x)
+            nodes_shape (torch.Tensor): Shape (B, n, x)
                 tensor describing the pre-padded shape of
                 `graph_nodes`. `B` is the batch dimension.
-            graph_edges (torch.Tensor): Shape (B, 2, E) tensor
+            edges (torch.Tensor): Shape (B, 2, E) tensor
                 of `B` `E` (from_node, to_node) edges. `B`
                 is the batch dimension.
-            graph_edge_shapes (torch.Tensor): Shape (B, 2, e)
+            edges_shape (torch.Tensor): Shape (B, 2, e)
                 tensor describing the original shape of
                 `graph_edges`. `B` is the batch dimension.
 
@@ -303,19 +297,19 @@ class GCN(torch.nn.Module, ABC):
         """
         # rllib sends a batch of 0 values observations on initialization
         # skip this batch to avoid breaking gcn graph padding
-        if (node_shapes == 0).all():
+        if (nodes_shape == 0).all():
             graph_features = torch.zeros((nodes.shape[0], self.out_features)).to(
                 nodes.device
             )
 
         else:
             datasets, valid_inds = self.get_datasets_from_batch(
-                nodes, node_shapes, edges, edge_shapes
+                nodes, nodes_shape, edges, edges_shape
             )
             loader = DataLoader(datasets, batch_size=len(datasets))
             batched_graph_features = self.forward_batch(loader)
             graph_features = self.postprocess_batch(
-                batched_graph_features, node_shapes, valid_inds
+                batched_graph_features, nodes_shape, valid_inds
             )
             graph_features = torch.cat(graph_features, axis=0)
 
@@ -328,7 +322,7 @@ class ActionLayerPolicy(GCN):
         in_features: int,
         graph_conv_features: List[int],
         embedding_size: List[int],
-        n_frame_nodes: int,
+        n_action_nodes: int,
     ):
         """Action layer policy.
 
@@ -343,15 +337,16 @@ class ActionLayerPolicy(GCN):
             in_features (int): Number of input features per node.
             graph_conv_features (List[int]): Number of channels per GCN.
             embedding_size (List[int]): Length of leanred per-node features.
-            n_frame_nodes (int): Number of action layer nodes.
+            n_action_nodes (int): Number of action layer nodes.
         """
         super().__init__(in_features, graph_conv_features, embedding_size)
-        self.n_agent_frame_nodes = n_frame_nodes
+        self.n_action_nodes = n_action_nodes
         if len(embedding_size) == 0:
-            self.out_features *= n_frame_nodes * graph_conv_features[-1]
+            self.out_features *= n_action_nodes * graph_conv_features[-1]
         else:
-            layers = [n_frame_nodes * graph_conv_features[-1]] + embedding_size
+            layers = [n_action_nodes * graph_conv_features[-1]] + embedding_size
             self.dense_layers = self.get_dense_layers(layers)
+            self.out_features = embedding_size[-1]
 
     def postprocess_padded_nodes(
         cls, node_tensors: torch.Tensor, node_shapes: torch.Tensor
@@ -379,7 +374,7 @@ class ActionLayerPolicy(GCN):
             batch_index = torch.zeros(h.shape[0], dtype=torch.int64).to(h.device)
 
         h = self.reshape_nodes_flat_to_batch(h, batch_index)
-        h = h[:, : self.n_agent_frame_nodes]
+        h = h[:, : self.n_action_nodes]
         h = h.reshape(h.shape[0], -1)
 
         if self.dense_layers is not None:
@@ -394,20 +389,21 @@ class ActionLayerBase(NetworkBase):
         in_features: int,
         graph_conv_features: List[int],
         embedding_size: List[int],
-        n_frame_nodes: int,
+        n_action_nodes: int,
     ):
         """Wraps `ActionLayerPolicy` in `NetworkBase` interface.
 
         Args:
             fields (Dict[str, str]): Dictionary mapping observation field
-                to key in input observation dictionary.
-            in_features (int):Per-node input feature length.
+                to key in input observation dictionary. Expects the following
+                keys: {nodes, edges, nodes_shape, edges_shape}.
+            in_features (int): Per-node input feature length.
             graph_conv_features (List[int]): Per-layer GCN channel size.
             embedding_size (List[int]): Length of learned per-node features.
-            n_frame_nodes (int): Number of action layer nodes.
+            n_action_nodes (int): Number of action layer nodes.
         """
         net = ActionLayerPolicy(
-            in_features, graph_conv_features, embedding_size, n_frame_nodes
+            in_features, graph_conv_features, embedding_size, n_action_nodes
         )
         super().__init__(net, net.out_features, fields.keys())
         self.fields = fields
@@ -431,7 +427,7 @@ class ActionLayerBase(NetworkBase):
             data = obs[obs_key]
             if rnn_input:  # combine time and batch inds for RNN input
                 data = data.reshape((-1,) + tuple(data.shape[2:]))
-            if field in ("node_shapes", "edge_shapes"):
+            if field in ("nodes_shape", "edges_shape"):
                 data = data.type(torch.int32)
             graph_obs[field] = data
 
@@ -439,7 +435,43 @@ class ActionLayerBase(NetworkBase):
 
     def forward(self, obs, rnn_input):
         data = self.get_obs(obs, rnn_input)
-        return self.net(**data)
+        return self.net(
+            nodes=data["nodes"],
+            edges=data["edges"],
+            nodes_shape=data["nodes_shape"],
+            edges_shape=data["edges_shape"],
+        )
+
+
+class PointNet(torch.nn.Module):
+    def __init__(self, dense_layers: List[int], in_features: Optional[int] = 2) -> None:
+        super().__init__()
+        dense_layers = [in_features] + dense_layers
+        self.dense_layers = torch.nn.Sequential(
+            *[
+                torch.nn.Linear(dense_layers[i], dense_layers[i + 1])
+                for i in range(len(dense_layers) - 1)
+            ]
+        )
+
+        if len(dense_layers):
+            self.out_features = dense_layers[-1]
+        else:
+            self.out_features = in_features
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.dense_layers(x)
+
+
+class PointNetBase(NetworkBase):
+    def __init__(
+        self, dense_layers, fields: Dict[str, str], in_features: Optional[int] = 2,
+    ) -> None:
+        net = PointNet(dense_layers=dense_layers, in_features=in_features)
+        super().__init__(net, net.out_features, fields)
+
+    def preprocess_obs(self, x: torch.Tensor) -> torch.Tensor:
+        return torch.cat(x, axis=-1)
 
 
 class ActionLayerGNNActorCritic(ActorCritic):
@@ -449,14 +481,42 @@ class ActionLayerGNNActorCritic(ActorCritic):
     def init_nets(
         self,
         *,
-        fields: List[str],
-        in_features,
-        graph_conv_features,
-        embedding_size,
-        n_layer_nodes
-    ):
-        return [
+        fields: Dict[str, str],
+        in_features: int,
+        graph_conv_features: List[int],
+        embedding_size: List[int],
+        n_action_nodes: int,
+    ) -> Tuple[ActionLayerBase]:
+        return (
             ActionLayerBase(
-                fields, in_features, graph_conv_features, embedding_size, n_layer_nodes
-            )
-        ]
+                fields=fields,
+                in_features=in_features,
+                graph_conv_features=graph_conv_features,
+                embedding_size=embedding_size,
+                n_action_nodes=n_action_nodes,
+            ),
+        )
+
+
+class PointGoalGNNActorCritic(ActorCritic):
+    def init_nets(
+        self,
+        *,
+        fields: Dict[str, str],
+        in_features: int,
+        graph_conv_features: List[int],
+        embedding_size: List[int],
+        n_action_nodes: int,
+        pointnet_layers: List[int],
+        pointnet_fields: Dict[str, str],
+    ) -> Tuple[ActionLayerBase, PointNetBase]:
+        gnn = ActionLayerBase(
+            fields=fields,
+            in_features=in_features,
+            graph_conv_features=graph_conv_features,
+            embedding_size=embedding_size,
+            n_action_nodes=n_action_nodes,
+        )
+        point_net = PointNetBase(dense_layers=pointnet_layers, fields=pointnet_fields)
+        return (gnn, point_net)
+
