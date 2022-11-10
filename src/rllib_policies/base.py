@@ -19,7 +19,7 @@
 # this work.
 ###################################################################################################
 
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Tuple, Union
 
 import gym
 import numpy as np
@@ -165,9 +165,9 @@ class RllibPolicy(nn.Module):
         obs = restore_original_dimensions(
             input_obs, self.full_obs_space, tensorlib="torch"
         )
-        return torch.cat([n(obs, rnn_input) for n in self.nets])
+        return torch.cat([n(obs, rnn_input) for n in self.nets], axis=-1)
 
-    def init_nets(self, **custom_net_args: Dict[str, Any]) -> List[NetworkBase]:
+    def init_nets(self, **custom_net_args: Dict[str, Any]) -> Tuple[NetworkBase, ...]:
         """Initialize custom networks.
 
         Parameters
