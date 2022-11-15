@@ -465,7 +465,7 @@ class PointNet(torch.nn.Module):
 
 class PointNetBase(NetworkBase):
     def __init__(
-        self, dense_layers, fields: Dict[str, str], in_features: Optional[int] = 2,
+        self, dense_layers, fields: Dict[str, str], in_features: Optional[int] = 5,
     ) -> None:
         net = PointNet(dense_layers=dense_layers, in_features=in_features)
         super().__init__(net, net.out_features, fields)
