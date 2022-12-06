@@ -33,7 +33,10 @@ from .actor_critic import ActorCritic
 
 class GCN(torch.nn.Module, ABC):
     def __init__(
-        self, in_features, graph_conv_features=[16, 32], embedding_size=[128],
+        self,
+        in_features,
+        graph_conv_features=[16, 32],
+        embedding_size=[128],
     ):
         """Initialize Graph Convolutional Network
 
@@ -198,7 +201,9 @@ class GCN(torch.nn.Module, ABC):
 
     @abstractclassmethod
     def get_policy_features(
-        self, h: torch.Tensor, batch_index: torch.Tensor,
+        self,
+        h: torch.Tensor,
+        batch_index: torch.Tensor,
     ) -> torch.Tensor:
         """Get learned graph features for policy.
 
@@ -465,7 +470,10 @@ class PointNet(torch.nn.Module):
 
 class PointNetBase(NetworkBase):
     def __init__(
-        self, dense_layers, fields: Dict[str, str], in_features: Optional[int] = 5,
+        self,
+        dense_layers,
+        fields: Dict[str, str],
+        in_features: Optional[int] = 5,
     ) -> None:
         net = PointNet(dense_layers=dense_layers, in_features=in_features)
         super().__init__(net, net.out_features, fields)
@@ -509,6 +517,7 @@ class PointGoalGNNActorCritic(ActorCritic):
         n_action_nodes: int,
         pointnet_layers: List[int],
         pointnet_fields: Dict[str, str],
+        pointnet_in_features: int,
     ) -> Tuple[ActionLayerBase, PointNetBase]:
         gnn = ActionLayerBase(
             fields=fields,
@@ -517,6 +526,9 @@ class PointGoalGNNActorCritic(ActorCritic):
             embedding_size=embedding_size,
             n_action_nodes=n_action_nodes,
         )
-        point_net = PointNetBase(dense_layers=pointnet_layers, fields=pointnet_fields)
+        point_net = PointNetBase(
+            dense_layers=pointnet_layers,
+            fields=pointnet_fields,
+            in_features=pointnet_in_features,
+        )
         return (gnn, point_net)
-
